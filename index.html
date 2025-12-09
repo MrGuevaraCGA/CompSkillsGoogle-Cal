@@ -1,596 +1,97 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calendar Quest: Organize to Survive</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;600&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Fredoka', sans-serif; background-color: #2d1b4e; color: white; user-select: none; }
+export default async function handler(req, res) {
+  // CORS: Allow your simulation to talk to this backend
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*'); 
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  if (req.method !== "POST") {
+    res.setHeader("Allow", ["POST"]);
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ reply: "Configuration Error: GEMINI_API_KEY is missing in Vercel." });
+  }
+
+  try {
+    const { message, context } = req.body || {};
+    
+    // --- CONTEXT SWITCHING LOGIC ---
+    let systemPrompt = "";
+
+    if (context === 'hospital') {
+        systemPrompt = "You are the Chief Medical Superintendent. Cynical, dramatic tone.";
+    } else if (context === 'jester') {
+        systemPrompt = "You are a friendly robot jester. Tell 1 short, school-safe joke about time/calendars.";
+    } else if (context === 'hint') {
+        systemPrompt = "You are a helpful tutor. Give a gentle hint about the user's task categorization. Don't reveal the exact answer directly.";
+    } else if (context === 'quiz') {
+        systemPrompt = `You are a quiz generator. Generate a JSON object with a single multiple-choice question about time management. 
+        Format: {"question": "...", "options": ["A", "B", "C", "D"], "answer": 0} (where answer is the index of the correct option). 
+        Do not output markdown formatting, just raw JSON.`;
+    } else {
+        // Default
+        systemPrompt = "You are a helpful AI assistant.";
+    }
+
+    const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
+
+    // --- CHANGED MODEL TO GEMINI 2.5 FLASH LIVE AS REQUESTED ---
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-live:generateContent?key=" + encodeURIComponent(apiKey);
+    
+    const payload = {
+      contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
+    };
+
+    const upstreamRes = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    // Better Error Handling: Check status before parsing JSON
+    if (!upstreamRes.ok) {
+        const errorText = await upstreamRes.text();
+        console.error("Gemini API Error:", upstreamRes.status, errorText);
         
-        /* Game Board Styles */
-        .calendar-grid { 
-            display: grid; 
-            grid-template-columns: 60px repeat(5, 1fr); 
-            grid-template-rows: 40px repeat(5, 1fr);
-            gap: 2px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
-        }
-
-        .cal-header { background: #5b21b6; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-        .cal-time { background: #4c1d95; color: #a78bfa; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        let friendlyError = "System Error";
+        if (upstreamRes.status === 429) friendlyError = "Rate Limit Exceeded (Quota)";
+        if (upstreamRes.status === 400) friendlyError = "Invalid API Key or Request";
         
-        .cal-slot { 
-            background: rgba(255,255,255,0.05); 
-            border: 1px solid rgba(255,255,255,0.05); 
-            transition: all 0.2s;
-            position: relative;
-        }
-        .cal-slot.hovered { background: rgba(139, 92, 246, 0.3); box-shadow: inset 0 0 10px #8b5cf6; }
-        .cal-slot.correct { background: rgba(34, 197, 94, 0.2); border-color: #22c55e; }
-        .cal-slot.wrong { animation: shake 0.5s; background: rgba(239, 68, 68, 0.2); border-color: #ef4444; }
+        return res.status(upstreamRes.status).json({ 
+            reply: `${friendlyError} (${upstreamRes.status}): ${errorText.substring(0, 100)}...` 
+        });
+    }
 
-        /* Draggable Items */
-        .task-card {
-            background: white;
-            color: #1e1b4b;
-            padding: 8px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            font-weight: bold;
-            cursor: grab;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            transition: transform 0.1s;
-            margin-bottom: 8px;
-            border-left: 4px solid #3b82f6;
-        }
-        .task-card:active { cursor: grabbing; transform: scale(0.95); }
-        .task-card[data-type="personal"] { border-left-color: #22c55e; }
-        .task-card[data-type="urgent"] { border-left-color: #ef4444; }
+    const data = await upstreamRes.json();
+    
+    // Check for API logic errors
+    if (data.error) {
+        console.error("Gemini Logic Error:", data.error);
+        return res.status(500).json({ reply: "AI Logic Error: " + data.error.message });
+    }
 
-        /* Mr. Calendar Alien Styles */
-        #mr-calendar-container {
-            position: relative;
-            width: 200px;
-            height: 300px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 20px;
-            margin: 0 auto;
-        }
-        .alien-part {
-            position: absolute;
-            background: #a78bfa;
-            border: 2px solid #ddd6fe;
-            display: none; /* Hidden by default */
-            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        /* Body Parts Definition */
-        .part-head { width: 80px; height: 80px; top: 20px; left: 60px; border-radius: 40px; z-index: 10; }
-        .part-eye-l { width: 20px; height: 20px; top: 40px; left: 75px; background: white; border-radius: 50%; z-index: 11; display: none;}
-        .part-eye-r { width: 20px; height: 20px; top: 40px; left: 105px; background: white; border-radius: 50%; z-index: 11; display: none;}
-        .part-pupil { width: 8px; height: 8px; background: black; border-radius: 50%; position: relative; top: 6px; left: 6px; }
-        .part-body { width: 100px; height: 120px; top: 90px; left: 50px; border-radius: 20px; z-index: 5; }
-        .part-arm-l { width: 30px; height: 80px; top: 100px; left: 20px; border-radius: 15px; transform: rotate(20deg); }
-        .part-arm-r { width: 30px; height: 80px; top: 100px; left: 150px; border-radius: 15px; transform: rotate(-20deg); }
-        .part-leg-l { width: 35px; height: 90px; top: 200px; left: 60px; border-radius: 15px; }
-        .part-leg-r { width: 35px; height: 90px; top: 200px; left: 105px; border-radius: 15px; }
-        .part-antenna { width: 10px; height: 30px; top: -10px; left: 95px; background: #c4b5fd; z-index: 1; }
-        
-        .visible { display: block !important; animation: popIn 0.5s; }
+    let replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response text found.";
 
-        @keyframes popIn { 0% { transform: scale(0); } 80% { transform: scale(1.1); } 100% { transform: scale(1); } }
-        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
-        
-        .loading-pulse { animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-    </style>
-</head>
-<body class="h-screen flex flex-col">
+    // Clean up JSON output if needed for quiz mode
+    if (context === 'quiz') {
+         replyText = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
+    }
 
-    <!-- Header -->
-    <header class="bg-indigo-900 p-4 shadow-lg flex justify-between items-center z-20">
-        <div class="flex items-center gap-4">
-            <div class="bg-indigo-500 p-2 rounded-lg text-2xl">📅</div>
-            <div>
-                <h1 class="text-xl font-bold text-white">Calendar Quest</h1>
-                <div class="text-xs text-indigo-200">Level <span id="level-display">1</span>/10</div>
-            </div>
-        </div>
-        
-        <div class="flex gap-4">
-            <button onclick="askAIJoke()" id="ai-btn" class="bg-pink-600 hover:bg-pink-500 text-white px-4 py-2 rounded-full font-bold shadow-lg transition-transform hover:scale-105 flex items-center gap-2">
-                <span>🤖 Tell me a Joke</span>
-            </button>
-        </div>
-    </header>
+    return res.status(200).json({ reply: replyText });
 
-    <!-- Main Game Area -->
-    <main class="flex-1 flex overflow-hidden">
-        
-        <!-- Left: Chaos Queue (Inventory) -->
-        <aside class="w-64 bg-indigo-950 p-4 flex flex-col border-r border-indigo-800 relative z-10">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-indigo-300 font-bold">Chaos Queue</h2>
-                <button onclick="askAIHint()" id="hint-btn" class="text-xs bg-yellow-500 hover:bg-yellow-400 text-black px-2 py-1 rounded font-bold shadow transition">
-                    💡 Hint
-                </button>
-            </div>
-            
-            <div class="text-xs text-indigo-400 mb-2 flex justify-between">
-                <span>Drag to Calendar</span>
-                <span class="bg-indigo-800 px-2 rounded" id="items-left">0 left</span>
-            </div>
-
-            <div id="task-container" class="flex-1 overflow-y-auto space-y-2 pr-2">
-                <!-- Tasks injected here -->
-            </div>
-            
-            <!-- Mr. Calendar Preview -->
-            <div class="mt-4 border-t border-indigo-800 pt-4 text-center">
-                <p class="text-xs text-indigo-400 mb-2">Build Status: Mr. Calendar</p>
-                <div id="mr-calendar-container">
-                    <div class="alien-part part-head" id="part-1"></div>
-                    <div class="alien-part part-eye-l" id="part-2"><div class="part-pupil"></div></div>
-                    <div class="alien-part part-eye-r" id="part-3"><div class="part-pupil"></div></div>
-                    <div class="alien-part part-antenna" id="part-4"></div>
-                    <div class="alien-part part-body" id="part-5"></div>
-                    <div class="alien-part part-arm-l" id="part-6"></div>
-                    <div class="alien-part part-arm-r" id="part-7"></div>
-                    <div class="alien-part part-leg-l" id="part-8"></div>
-                    <div class="alien-part part-leg-r" id="part-9"></div>
-                    <!-- Part 10 is the mouth/smile added dynamically or visual effect -->
-                    <div class="alien-part" style="width: 40px; height: 10px; top: 70px; left: 80px; background: white; border-radius: 10px; z-index: 12;" id="part-10"></div>
-                </div>
-            </div>
-        </aside>
-
-        <!-- Center: Calendar Grid -->
-        <section class="flex-1 p-6 relative bg-gradient-to-br from-indigo-900 to-purple-900 flex flex-col justify-center">
-            
-            <!-- Level Instruction Banner -->
-            <div id="instruction-banner" class="bg-indigo-800/80 backdrop-blur p-4 rounded-xl mb-4 border border-indigo-500 shadow-xl">
-                <h3 class="font-bold text-yellow-300 text-lg mb-1" id="level-title">Level 1: The Basics</h3>
-                <p class="text-sm text-indigo-100" id="level-desc">Drag the events to the correct days. "Monday Math" goes to Monday!</p>
-            </div>
-
-            <!-- The Grid -->
-            <div class="calendar-grid h-full max-h-[600px]">
-                <!-- Header Row -->
-                <div class="cal-header"></div> <!-- Corner -->
-                <div class="cal-header text-pink-300">Mon</div>
-                <div class="cal-header text-pink-300">Tue</div>
-                <div class="cal-header text-pink-300">Wed</div>
-                <div class="cal-header text-pink-300">Thu</div>
-                <div class="cal-header text-pink-300">Fri</div>
-
-                <!-- Time Rows -->
-                <!-- 9 AM -->
-                <div class="cal-time">9 AM</div>
-                <div class="cal-slot" data-day="mon" data-time="9"></div>
-                <div class="cal-slot" data-day="tue" data-time="9"></div>
-                <div class="cal-slot" data-day="wed" data-time="9"></div>
-                <div class="cal-slot" data-day="thu" data-time="9"></div>
-                <div class="cal-slot" data-day="fri" data-time="9"></div>
-
-                <!-- 11 AM -->
-                <div class="cal-time">11 AM</div>
-                <div class="cal-slot" data-day="mon" data-time="11"></div>
-                <div class="cal-slot" data-day="tue" data-time="11"></div>
-                <div class="cal-slot" data-day="wed" data-time="11"></div>
-                <div class="cal-slot" data-day="thu" data-time="11"></div>
-                <div class="cal-slot" data-day="fri" data-time="11"></div>
-
-                <!-- 1 PM -->
-                <div class="cal-time">1 PM</div>
-                <div class="cal-slot" data-day="mon" data-time="13"></div>
-                <div class="cal-slot" data-day="tue" data-time="13"></div>
-                <div class="cal-slot" data-day="wed" data-time="13"></div>
-                <div class="cal-slot" data-day="thu" data-time="13"></div>
-                <div class="cal-slot" data-day="fri" data-time="13"></div>
-                
-                <!-- 3 PM -->
-                <div class="cal-time">3 PM</div>
-                <div class="cal-slot" data-day="mon" data-time="15"></div>
-                <div class="cal-slot" data-day="tue" data-time="15"></div>
-                <div class="cal-slot" data-day="wed" data-time="15"></div>
-                <div class="cal-slot" data-day="thu" data-time="15"></div>
-                <div class="cal-slot" data-day="fri" data-time="15"></div>
-
-                <!-- 5 PM -->
-                <div class="cal-time">5 PM</div>
-                <div class="cal-slot" data-day="mon" data-time="17"></div>
-                <div class="cal-slot" data-day="tue" data-time="17"></div>
-                <div class="cal-slot" data-day="wed" data-time="17"></div>
-                <div class="cal-slot" data-day="thu" data-time="17"></div>
-                <div class="cal-slot" data-day="fri" data-time="17"></div>
-            </div>
-
-        </section>
-    </main>
-
-    <!-- Modal for Jokes / Quiz / Level Up -->
-    <div id="modal-overlay" class="fixed inset-0 bg-black/70 z-50 hidden flex items-center justify-center backdrop-blur-sm">
-        <div class="bg-white text-indigo-900 rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all scale-100 text-center">
-            <div id="modal-icon" class="text-6xl mb-4">🎉</div>
-            <h3 id="modal-title" class="font-bold text-2xl mb-2">Level Complete!</h3>
-            <p id="modal-content" class="text-lg mb-6 text-slate-600">You found Mr. Calendar's Head!</p>
-            
-            <div id="quiz-section" class="hidden text-left bg-indigo-50 p-4 rounded-lg mb-4">
-                <p class="font-bold mb-3" id="quiz-question">Loading AI Question...</p>
-                <div id="quiz-options" class="space-y-2">
-                    <!-- Options injected here -->
-                </div>
-                <div id="quiz-feedback" class="mt-2 text-sm font-bold hidden"></div>
-            </div>
-
-            <button onclick="closeModal()" id="modal-continue-btn" class="bg-indigo-600 text-white px-8 py-3 rounded-full font-bold hover:bg-indigo-700 transition w-full">Continue</button>
-        </div>
-    </div>
-
-    <script>
-        // --- Game Config ---
-        const API_URL = "https://comp-skills-google-cal.vercel.app/api/ask"; // Your Vercel deployment
-        let currentLevel = 1;
-        let correctPlacements = 0;
-        let totalLevelItems = 0;
-        let isQuizMode = false;
-
-        // --- Offline Content (Fallbacks) ---
-        const FALLBACK_JOKES = [
-            "Why did the calendar go to the gym? To get more dates!",
-            "What happens if you're late for school? Time flies!",
-            "Why did the computer arrive late? It had a hard drive!",
-            "My calendar is always nervous. Its days are numbered."
-        ];
-
-        const FALLBACK_QUIZZES = [
-            { question: "What should you do with a 'Red' urgent task?", options: ["Do it last", "Do it first", "Delete it", "Ignore it"], answer: 1 },
-            { question: "When is the best time to check your calendar?", options: ["Once a year", "Every morning", "Never", "Only on Sundays"], answer: 1 },
-            { question: "How long should a 'Brain Break' be?", options: ["2 hours", "5-10 minutes", "10 seconds", "All day"], answer: 1 }
-        ];
-
-        // --- Level Data ---
-        const levels = [
-            { 
-                title: "The Awakening", desc: "Drag tasks to the matching Day. Time doesn't matter yet.", 
-                tasks: [
-                    { id: 't1', text: "Math HW (Mon)", day: 'mon', type: 'work' },
-                    { id: 't2', text: "Soccer (Wed)", day: 'wed', type: 'personal' },
-                    { id: 't3', text: "Pizza Party (Fri)", day: 'fri', type: 'personal' }
-                ]
-            },
-            {
-                title: "Head's Up", desc: "Pay attention to Time! Sort by Day AND Time.",
-                tasks: [
-                    { id: 't4', text: "Dentist (Tue 9am)", day: 'tue', time: '9', type: 'urgent' },
-                    { id: 't5', text: "Lunch (Thu 1pm)", day: 'thu', time: '13', type: 'personal' },
-                    { id: 't6', text: "Science (Mon 11am)", day: 'mon', time: '11', type: 'work' }
-                ]
-            },
-            {
-                title: "Eye See You", desc: "Color Coding: Work is Blue, Urgent is Red.",
-                tasks: [
-                    { id: 't7', text: "Exam! (Fri 9am)", day: 'fri', time: '9', type: 'urgent' },
-                    { id: 't8', text: "Study (Wed 5pm)", day: 'wed', time: '17', type: 'work' },
-                    { id: 't9', text: "Gaming (Tue 3pm)", day: 'tue', time: '15', type: 'personal' }
-                ]
-            },
-            { title: "Left Eye", desc: "Busy Morning! Fill the 9am slots.", tasks: [{id:'l4a', text:"Meeting (Mon 9am)", day:'mon', time:'9', type:'work'}, {id:'l4b', text:"Yoga (Wed 9am)", day:'wed', time:'9', type:'personal'}] },
-            { title: "The Body", desc: "Afternoon Rush. Fill the 3pm slots.", tasks: [{id:'l5a', text:"Art (Tue 3pm)", day:'tue', time:'15', type:'personal'}, {id:'l5b', text:"Physics (Thu 3pm)", day:'thu', time:'15', type:'work'}] },
-            { title: "Left Arm", desc: "Friday Funday.", tasks: [{id:'l6a', text:"Movies (Fri 5pm)", day:'fri', time:'17', type:'personal'}, {id:'l6b', text:"Quiz (Fri 11am)", day:'fri', time:'11', type:'urgent'}] },
-            { title: "Right Arm", desc: "Midweek Madness.", tasks: [{id:'l7a', text:"Library (Wed 11am)", day:'wed', time:'11', type:'work'}, {id:'l7b', text:"Vet (Thu 9am)", day:'thu', time:'9', type:'urgent'}] },
-            { title: "Left Leg", desc: "Start the week right.", tasks: [{id:'l8a', text:"Gym (Mon 5pm)", day:'mon', time:'17', type:'personal'}] },
-            { title: "Right Leg", desc: "Wrapping up.", tasks: [{id:'l9a', text:"Clean (Tue 5pm)", day:'tue', time:'17', type:'work'}] },
-            { title: "The Smile", desc: "Final Test!", tasks: [{id:'l10a', text:"Graduation (Fri 3pm)", day:'fri', time:'15', type:'urgent'}, {id:'l10b', text:"Party (Fri 5pm)", day:'fri', time:'17', type:'personal'}] }
-        ];
-
-        // --- Init ---
-        function initGame() {
-            loadLevel(1);
-            setupDragAndDrop();
-        }
-
-        function loadLevel(lvl) {
-            currentLevel = lvl;
-            const levelData = levels[lvl - 1];
-            correctPlacements = 0;
-            totalLevelItems = levelData.tasks.length;
-
-            document.getElementById('level-display').innerText = lvl;
-            document.getElementById('level-title').innerText = `Level ${lvl}: ${levelData.title}`;
-            document.getElementById('level-desc').innerText = levelData.desc;
-            document.getElementById('items-left').innerText = `${totalLevelItems} left`;
-
-            document.querySelectorAll('.cal-slot').forEach(slot => {
-                slot.innerHTML = '';
-                slot.classList.remove('correct', 'wrong');
-            });
-
-            const container = document.getElementById('task-container');
-            container.innerHTML = '';
-            levelData.tasks.forEach(task => {
-                const el = document.createElement('div');
-                el.className = 'task-card';
-                el.innerText = task.text;
-                el.draggable = true;
-                el.dataset.id = task.id;
-                el.dataset.type = task.type;
-                el.dataset.targetDay = task.day;
-                el.dataset.targetTime = task.time || 'any'; 
-                container.appendChild(el);
-            });
-            
-            setupDragAndDrop();
-        }
-
-        // --- Drag & Drop Logic ---
-        let draggedItem = null;
-
-        function setupDragAndDrop() {
-            const cards = document.querySelectorAll('.task-card');
-            const slots = document.querySelectorAll('.cal-slot');
-
-            cards.forEach(card => {
-                card.addEventListener('dragstart', (e) => {
-                    draggedItem = card;
-                    setTimeout(() => card.style.display = 'none', 0);
-                });
-                card.addEventListener('dragend', () => {
-                    setTimeout(() => card.style.display = 'block', 0);
-                    draggedItem = null;
-                });
-            });
-
-            slots.forEach(slot => {
-                slot.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    slot.classList.add('hovered');
-                });
-                slot.addEventListener('dragleave', () => {
-                    slot.classList.remove('hovered');
-                });
-                slot.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    slot.classList.remove('hovered');
-                    if (draggedItem) {
-                        handleDrop(slot, draggedItem);
-                    }
-                });
-            });
-        }
-
-        function handleDrop(slot, card) {
-            if (slot.children.length > 0) return;
-
-            const targetDay = card.dataset.targetDay;
-            const targetTime = card.dataset.targetTime;
-            
-            const slotDay = slot.dataset.day;
-            const slotTime = slot.dataset.time;
-
-            const dayMatch = targetDay === slotDay;
-            const timeMatch = (targetTime === 'any') || (targetTime === slotTime);
-
-            if (dayMatch && timeMatch) {
-                slot.appendChild(card);
-                slot.classList.add('correct');
-                card.draggable = false;
-                card.style.cursor = 'default';
-                correctPlacements++;
-                document.getElementById('items-left').innerText = `${totalLevelItems - correctPlacements} left`;
-                
-                if (correctPlacements === totalLevelItems) {
-                    setTimeout(levelComplete, 500);
-                }
-            } else {
-                slot.classList.add('wrong');
-                setTimeout(() => slot.classList.remove('wrong'), 500);
-            }
-        }
-
-        // --- Level Completion & AI ---
-        function levelComplete() {
-            const part = document.getElementById(`part-${currentLevel}`);
-            if(part) part.classList.add('visible');
-
-            if (currentLevel % 2 !== 0) {
-                showQuiz();
-            } else {
-                showModal('Level Complete!', `You found Mr. Calendar's part #${currentLevel}!`, '🎉');
-            }
-        }
-
-        async function showQuiz() {
-            isQuizMode = true;
-            const modal = document.getElementById('modal-overlay');
-            const quizBox = document.getElementById('quiz-section');
-            const title = document.getElementById('modal-title');
-            const content = document.getElementById('modal-content');
-            const continueBtn = document.getElementById('modal-continue-btn');
-            
-            modal.classList.remove('hidden');
-            quizBox.classList.remove('hidden');
-            continueBtn.classList.add('hidden');
-            
-            title.innerText = "Challenge!";
-            content.innerText = "Answer this to unlock the next level:";
-            document.getElementById('modal-icon').innerText = "🧠";
-            
-            const qEl = document.getElementById('quiz-question');
-            const optsEl = document.getElementById('quiz-options');
-            
-            qEl.innerText = "Generating AI Question...";
-            optsEl.innerHTML = "";
-            
-            const payload = {
-                message: "Generate a multiple choice question about time management or calendars for a student. Format: JSON with 'question', 'options' (array), and 'answer' (index).",
-                context: "quiz"
-            };
-
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await response.json();
-                
-                // ERROR CHECK: If API returns "System Error", force jump to catch block
-                if (!data.reply || data.reply.includes("System Error")) throw new Error("API Fallback");
-
-                let quizData;
-                try {
-                    let jsonStr = data.reply.replace(/```json/g, '').replace(/```/g, '').trim();
-                    quizData = JSON.parse(jsonStr);
-                } catch(e) {
-                    throw new Error("Invalid JSON from AI");
-                }
-
-                renderQuiz(quizData);
-
-            } catch(e) {
-                // FALLBACK MODE
-                console.log("Using Fallback Quiz");
-                const randomQuiz = FALLBACK_QUIZZES[Math.floor(Math.random() * FALLBACK_QUIZZES.length)];
-                renderQuiz(randomQuiz);
-            }
-        }
-
-        function renderQuiz(quizData) {
-            const qEl = document.getElementById('quiz-question');
-            const optsEl = document.getElementById('quiz-options');
-            
-            qEl.innerText = quizData.question;
-            optsEl.innerHTML = "";
-
-            quizData.options.forEach((opt, idx) => {
-                const btn = document.createElement('button');
-                btn.className = "w-full bg-white border border-indigo-200 p-2 rounded mb-2 hover:bg-indigo-100 transition text-sm text-left";
-                btn.innerText = opt;
-                btn.onclick = () => handleQuizAnswer(idx, quizData.answer, btn);
-                optsEl.appendChild(btn);
-            });
-        }
-
-        function handleQuizAnswer(selected, correct, btnElement) {
-            const feedback = document.getElementById('quiz-feedback');
-            const continueBtn = document.getElementById('modal-continue-btn');
-            feedback.classList.remove('hidden');
-            
-            if(selected === correct) {
-                btnElement.classList.add('bg-green-200', 'border-green-500');
-                feedback.innerText = "Correct! Well done.";
-                feedback.className = "mt-2 text-sm font-bold text-green-600";
-                continueBtn.classList.remove('hidden');
-            } else {
-                btnElement.classList.add('bg-red-200', 'border-red-500');
-                feedback.innerText = "Not quite. Try again!";
-                feedback.className = "mt-2 text-sm font-bold text-red-600";
-            }
-        }
-
-        function showModal(title, text, icon) {
-            document.getElementById('modal-overlay').classList.remove('hidden');
-            document.getElementById('modal-title').innerText = title;
-            document.getElementById('modal-content').innerText = text;
-            document.getElementById('modal-icon').innerText = icon;
-            document.getElementById('quiz-section').classList.add('hidden');
-            document.getElementById('modal-continue-btn').classList.remove('hidden');
-        }
-
-        function closeModal() {
-            document.getElementById('modal-overlay').classList.add('hidden');
-            if (correctPlacements === totalLevelItems) {
-                if(currentLevel < 10) {
-                    loadLevel(currentLevel + 1);
-                } else {
-                    alert("YOU SAVED MR. CALENDAR! GAME OVER.");
-                    location.reload();
-                }
-            }
-            document.getElementById('quiz-feedback').classList.add('hidden');
-            isQuizMode = false;
-        }
-
-        // --- AI API Calls ---
-        async function askAIJoke() {
-            const btn = document.getElementById('ai-btn');
-            btn.innerHTML = `<span>⏳ Loading...</span>`;
-            
-            const payload = {
-                message: "Tell me a short, funny joke about calendars, time, or being late. Keep it appropriate.",
-                context: "jester" 
-            };
-
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await response.json();
-                // Check for System Error
-                if (!data.reply || data.reply.includes("System Error")) throw new Error("API Fallback");
-                
-                showModal("Jester Bot Says:", data.reply, "🤖");
-
-            } catch (error) {
-                // FALLBACK MODE
-                const randomJoke = FALLBACK_JOKES[Math.floor(Math.random() * FALLBACK_JOKES.length)];
-                showModal("Jester Bot Says:", randomJoke + " (Offline Mode)", "🤖");
-            } finally {
-                btn.innerHTML = `<span>🤖 Tell me a Joke</span>`;
-            }
-        }
-
-        async function askAIHint() {
-            const btn = document.getElementById('hint-btn');
-            const originalText = btn.innerText;
-            btn.innerText = "Thinking...";
-            btn.disabled = true;
-
-            const container = document.getElementById('task-container');
-            if(container.children.length === 0) {
-                btn.innerText = originalText;
-                btn.disabled = false;
-                alert("No tasks left to hint about!");
-                return;
-            }
-            
-            const topTask = container.children[0].innerText;
-            
-            const payload = {
-                message: `Task: "${topTask}". Give a hint about categorizing this task.`,
-                context: "hint"
-            };
-
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await response.json();
-                if (!data.reply || data.reply.includes("System Error")) throw new Error("API Fallback");
-                
-                alert("💡 Hint: " + data.reply);
-            } catch(e) {
-                // FALLBACK MODE
-                alert("💡 Hint: Look closely at the day and time mentioned in the text! (Offline Hint)");
-            } finally {
-                btn.innerText = originalText;
-                btn.disabled = false;
-            }
-        }
-
-        // Start
-        initGame();
-
-    </script>
-</body>
-</html>
+  } catch (err) {
+    console.error("Server Crash:", err);
+    return res.status(500).json({ reply: "Server Crash: " + err.message });
+  }
+}
