@@ -24,30 +24,27 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, mode, context } = req.body || {};
+    const { message, context } = req.body || {};
     
     // --- CONTEXT SWITCHING LOGIC ---
     let systemPrompt = "";
 
     if (context === 'hospital') {
-        // HOSPITAL SIMULATOR PERSONA
-        systemPrompt = `
-        You are the Chief Medical Superintendent of a chaotic General Hospital.
-        Your tone is professional but slightly cynical/dramatic (like Dr. House).
-        Keep responses concise (under 2 sentences unless asked for a list).
-        You are generating content for a hospital simulation game.
-        `;
+        systemPrompt = "You are the Chief Medical Superintendent. Cynical, dramatic tone.";
+    } else if (context === 'jester') {
+        systemPrompt = "You are a friendly robot jester. Tell short, school-safe jokes about time/calendars.";
+    } else if (context === 'hint') {
+        systemPrompt = "You are a helpful tutor. Give a gentle hint about the user's task categorization. Don't reveal the exact answer directly.";
+    } else if (context === 'quiz') {
+        systemPrompt = `You are a quiz generator. Generate a JSON object with a single multiple-choice question about time management. 
+        Format: {"question": "...", "options": ["A", "B", "C", "D"], "answer": 0} (where answer is the index of the correct option). 
+        Do not output markdown formatting, just raw JSON.`;
     } else {
-        // DEFAULT / CITY BUILDER PERSONA (Fallback)
-        systemPrompt = `
-        You are the "City OS" AI for Chrono-City.
-        Your job is to help the Mayor (student) manage their calendar city.
-        Keep responses short, authoritative but friendly.
-        `;
+        // Default
+        systemPrompt = "You are a helpful AI assistant.";
     }
 
-    // Combine user message with system prompt
-    const finalPrompt = `${systemPrompt}\n\nUser Request: ${message}`;
+    const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
     const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
     
@@ -63,6 +60,11 @@ export default async function handler(req, res) {
 
     const data = await upstreamRes.json();
     let replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "System Error";
+
+    // Clean up JSON output if needed for quiz mode
+    if (context === 'quiz') {
+         replyText = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
+    }
 
     return res.status(200).json({ reply: replyText });
 
