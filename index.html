@@ -212,7 +212,7 @@
       bottom: 20px;
       right: 20px;
       width: 320px;
-      max-height: 500px;
+      max-height: 550px;
       display: flex;
       flex-direction: column;
       pointer-events: auto;
@@ -232,7 +232,7 @@
       background: rgba(0,0,0,0.9);
       border: 1px solid #444;
       border-top: none;
-      height: 300px;
+      height: 400px;
       display: flex;
       flex-direction: column;
       transition: height 0.3s;
@@ -251,7 +251,24 @@
     .msg.bot { background: #333; color: #00d9ff; border-left: 2px solid #00d9ff; }
     .msg.user { background: #444; color: white; text-align: right; }
 
-    #chat-inputs { padding: 10px; border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+    #ai-tools {
+        padding: 10px;
+        background: #222;
+        border-top: 1px solid #444;
+    }
+
+    #magic-input {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+        background: #111;
+        border: 1px solid #555;
+        color: white;
+        border-radius: 4px;
+        margin-bottom: 5px;
+    }
+
+    #chat-inputs { padding-top: 5px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
     
     button {
       padding: 8px;
@@ -264,6 +281,7 @@
     }
     button:hover { background: #555; }
     button.action-btn { background: var(--work-color); color: black; font-weight: bold; border: none; grid-column: span 2; }
+    button.magic-btn { background: linear-gradient(45deg, #bd00ff, #00d9ff); border: none; font-weight: bold; width: 100%; margin-bottom: 5px;}
 
     /* --- Overlay --- */
     #overlay {
@@ -326,11 +344,19 @@
         <div id="chat-log">
           <div class="msg bot">Welcome, Mayor! Drag tasks to the correct district to build your city. Don't let tasks pile up!</div>
         </div>
-        <div id="chat-inputs">
-          <button onclick="askAI('tip')">💡 Tip</button>
-          <button onclick="askAI('joke')">😂 Joke</button>
-          <button class="action-btn" onclick="generateChaos()">⚠️ Trigger Task Storm (AI)</button>
+        
+        <!-- New AI Tools Section -->
+        <div id="ai-tools">
+            <input id="magic-input" type="text" placeholder="Type a task (e.g. 'Study Math')..." onkeypress="if(event.key === 'Enter') magicSpawn()">
+            <button class="magic-btn" onclick="magicSpawn()">✨ Auto-Classify & Spawn</button>
+            
+            <div id="chat-inputs">
+              <button onclick="askAI('tip')">💡 Tip</button>
+              <button onclick="analyzeCity()">📊 Analyze</button>
+              <button class="action-btn" onclick="generateChaos()">⚠️ Task Storm (AI)</button>
+            </div>
         </div>
+
       </div>
     </div>
   </div>
@@ -346,6 +372,9 @@
 
   <script>
     /* --- Game Configuration --- */
+    // IMPORTANT: Point to your Vercel API
+    const API_URL = "https://comp-skills-google-cal.vercel.app/api/ask";
+
     const TASKS = [
       { text: "Math Test", type: "work" },
       { text: "Science HW", type: "work" },
@@ -369,9 +398,6 @@
 
     let spawnTimer;
     let gameLoopRef;
-
-    /* --- Audio Context (Optional) --- */
-    // Simple beeps could go here
 
     /* --- Core Game Logic --- */
     function startGame() {
@@ -402,13 +428,8 @@
       el.innerText = data.text;
       el.dataset.type = data.type;
       
-      // Random start position on the board (0-800px)
       const x = Math.random() * 600 + 100;
       const y = Math.random() * 600 + 100;
-      
-      // Start high up (Z axis in our transformed space)
-      // Since we are using rotateX, 'top' moves it "back" visually on the plane
-      // We will use standard top/left for position on the plane, and transform Z for height
       
       el.style.left = x + 'px';
       el.style.top = y + 'px';
@@ -423,9 +444,7 @@
         type: data.type
       };
       
-      // Attach drag events
       makeDraggable(el, taskObj);
-      
       document.getElementById('tasks-layer').appendChild(el);
       gameState.tasks.push(taskObj);
     }
@@ -475,11 +494,9 @@
     }
 
     function buildCity(type, x, y) {
-      // Spawn a building at random spot inside the zone
       const b = document.createElement('div');
       b.className = 'building';
       
-      // Determine color based on type
       let color = 'white';
       if(type === 'work') color = 'var(--work-color)';
       if(type === 'personal') color = 'var(--personal-color)';
@@ -487,7 +504,6 @@
       
       b.style.background = color;
       
-      // Add faces for 3D effect
       b.innerHTML = `
         <div class="face front"></div>
         <div class="face back"></div>
@@ -496,7 +512,6 @@
         <div class="face top"></div>
       `;
       
-      // Random position slightly randomized near drop
       b.style.left = (x - 20) + 'px';
       b.style.top = (y - 20) + 'px';
       
@@ -566,27 +581,7 @@
 
     function moveDrag(e) {
         if (!currentDrag) return;
-        
-        let cx = e.clientX;
-        let cy = e.clientY;
-        if(e.touches && e.touches.length > 0) {
-            cx = e.touches[0].clientX;
-            cy = e.touches[0].clientY;
-        }
-
-        // We need to map 2D screen mouse coordinates back to the 3D plane
-        // This is complex math, but we can cheat since we have a fixed view.
-        // Or simpler: We just move the element in 2D "Screen Space" by taking it out of the container temporarily?
-        // No, let's keep it simple: Move the element based on mouse deltas?
-        // EASIEST WAY: While dragging, we just follow the mouse purely visually.
-        
-        // Actually, for this simulation, let's just use the mouse position relative to the window
-        // and check overlap with the 'zones' utilizing document.elementFromPoint.
-        
         currentDrag.el.style.transform = `translateZ(500px)`; // Lift it up
-        
-        // We need to calculate where on the 'plane' the mouse is. 
-        // Since that's hard, we will rely on "drop target" logic on mouse up using standard DOM rectangles.
     }
 
     window.onmouseup = function(e) { endDrag(e); };
@@ -602,16 +597,11 @@
             cy = e.changedTouches[0].clientY;
         }
 
-        // Check what's under the mouse/finger
-        // We hide the dragged element for a millisecond so we can see what's under it
         currentDrag.el.style.display = 'none';
         let elemBelow = document.elementFromPoint(cx, cy);
         currentDrag.el.style.display = 'flex';
 
-        if (!elemBelow) {
-            cancelDrag(); 
-            return;
-        }
+        if (!elemBelow) { cancelDrag(); return; }
 
         const district = elemBelow.closest('.district');
         
@@ -622,23 +612,12 @@
             if (district.id === 'zone-urgent') targetType = 'urgent';
 
             if (targetType === currentDrag.type) {
-                // Success!
-                // We need coordinate relative to the plane to place building
-                // We'll just use the district's offset + random
-                const rect = district.getBoundingClientRect();
-                // Rough estimation of position on the plane is hard, so let's just random spawn inside the district div
-                // We can append building TO the district? No, buildings layer is separate.
-                // Let's use the district's 'style' coordinates (top/left)
-                
+                // Success
                 let bx = parseInt(district.style.left || district.offsetLeft);
                 let by = parseInt(district.style.top || district.offsetTop);
-                
-                // Add randomness
                 bx += Math.random() * 150;
                 by += Math.random() * 150;
-                
                 buildCity(targetType, bx, by);
-                
                 currentDrag.el.remove();
                 gameState.tasks = gameState.tasks.filter(t => t !== currentDrag);
             } else {
@@ -666,7 +645,7 @@
     function toggleChat() {
         const body = document.getElementById('ai-body');
         if (body.style.height === '0px' || body.classList.contains('collapsed')) {
-            body.style.height = '300px';
+            body.style.height = '400px';
             body.classList.remove('collapsed');
         } else {
             body.style.height = '0px';
@@ -683,43 +662,98 @@
         log.scrollTop = log.scrollHeight;
     }
 
+    /* --- API Calls --- */
     async function askAI(mode) {
         if(!gameState.active) { alert("Start game first!"); return; }
-        
         addChatMsg("...", "bot");
-        
         try {
-            const res = await fetch("/api/ask", {
+            // Updated to use absolute URL
+            const res = await fetch(API_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mode: mode, message: "Game Update" })
+                body: JSON.stringify({ mode: mode, message: "Request" })
+            });
+            const data = await res.json();
+            const log = document.getElementById('chat-log');
+            log.removeChild(log.lastChild);
+            if (data.reply) addChatMsg(data.reply, "bot");
+        } catch(e) { 
+            console.error(e);
+            addChatMsg("AI Offline. Check Console.", "bot"); 
+        }
+    }
+
+    /* New Feature 1: Analyze City Status */
+    async function analyzeCity() {
+        if(!gameState.active) return;
+        addChatMsg("Analyzing City Metrics...", "bot");
+        
+        const stats = `Score: ${gameState.score}, Stress: ${gameState.stress}%, Level: ${gameState.level}`;
+        
+        try {
+            // Updated to use absolute URL
+            const res = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "analyze", message: stats })
+            });
+            const data = await res.json();
+            const log = document.getElementById('chat-log');
+            log.removeChild(log.lastChild); // remove loading
+            if(data.reply) addChatMsg(data.reply, "bot");
+        } catch(e) {
+            console.error(e);
+            addChatMsg("Analysis Failed.", "bot");
+        }
+    }
+
+    /* New Feature 2: Magic Spawn (Auto Classify) */
+    async function magicSpawn() {
+        const inp = document.getElementById('magic-input');
+        const text = inp.value.trim();
+        if(!text) return;
+        
+        inp.value = '';
+        inp.placeholder = "AI is classifying...";
+        
+        try {
+            // Updated to use absolute URL
+            const res = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "classify", message: text })
             });
             const data = await res.json();
             
-            // Remove loading dots
-            const log = document.getElementById('chat-log');
-            log.removeChild(log.lastChild);
-            
-            if (data.reply) addChatMsg(data.reply, "bot");
-            
+            if(data.reply) {
+                // reply should be 'work', 'personal', 'urgent'
+                const type = data.reply.trim().toLowerCase();
+                if(['work','personal','urgent'].includes(type)) {
+                    spawnSpecificTask(text, type);
+                    addChatMsg(`✅ AI Classified "${text}" as ${type.toUpperCase()}`, "bot");
+                } else {
+                    addChatMsg(`❓ Could not classify "${text}". Try again.`, "bot");
+                }
+            }
         } catch(e) {
-            addChatMsg("AI Offline.", "bot");
+            console.error(e);
+            addChatMsg("AI Error.", "bot");
+        } finally {
+            inp.placeholder = "Type a task (e.g. 'Study Math')...";
         }
     }
 
     async function generateChaos() {
         if(!gameState.active) return;
         addChatMsg("Generating Storm...", "bot");
-        
         try {
-             const res = await fetch("/api/ask", {
+             // Updated to use absolute URL
+             const res = await fetch(API_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ mode: "generate", message: "storm" })
             });
             const data = await res.json();
-            
-            // Remove loading
             const log = document.getElementById('chat-log');
             log.removeChild(log.lastChild);
             
@@ -731,19 +765,19 @@
                     if(parts.length === 2) {
                         setTimeout(() => {
                             spawnSpecificTask(parts[0].trim(), parts[1].trim().toLowerCase());
-                        }, i * 500); // Staggered spawn
+                        }, i * 500); 
                         count++;
                     }
                 });
                 addChatMsg(`⚠️ INCOMING STORM: ${count} TASKS!`, "bot");
             }
-        } catch(e) {
-            addChatMsg("Storm failed.", "bot");
+        } catch(e) { 
+            console.error(e);
+            addChatMsg("Storm failed.", "bot"); 
         }
     }
     
     function spawnSpecificTask(text, type) {
-        // Same logic as spawnTask but with overrides
         const el = document.createElement('div');
         el.className = 'task-orb';
         el.innerText = text;
@@ -759,7 +793,7 @@
         el.style.transform = `translateZ(600px)`;
         
         const taskObj = {
-            el: el, x: x, y: y, z: 600, speed: 2, type: type // Faster storm tasks
+            el: el, x: x, y: y, z: 600, speed: 2, type: type
         };
         
         makeDraggable(el, taskObj);
