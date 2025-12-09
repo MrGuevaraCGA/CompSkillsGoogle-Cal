@@ -20,7 +20,7 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: "Missing GEMINI_API_KEY" });
+    return res.status(500).json({ reply: "Configuration Error: GEMINI_API_KEY is missing in Vercel." });
   }
 
   try {
@@ -46,8 +46,8 @@ export default async function handler(req, res) {
 
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
-    // --- CHANGED MODEL TO GEMINI 1.5 FLASH FOR HIGHER RATE LIMITS ---
-    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
+    // --- CHANGED MODEL TO GEMINI 2.5 FLASH LIVE AS REQUESTED ---
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-live:generateContent?key=" + encodeURIComponent(apiKey);
     
     const payload = {
       contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
@@ -59,15 +59,29 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload)
     });
 
-    const data = await upstreamRes.json();
-    
-    // Check for API errors in the response body
-    if (data.error) {
-        console.error("Gemini Error:", data.error);
-        return res.status(500).json({ reply: "System Error: " + data.error.message });
+    // Better Error Handling: Check status before parsing JSON
+    if (!upstreamRes.ok) {
+        const errorText = await upstreamRes.text();
+        console.error("Gemini API Error:", upstreamRes.status, errorText);
+        
+        let friendlyError = "System Error";
+        if (upstreamRes.status === 429) friendlyError = "Rate Limit Exceeded (Quota)";
+        if (upstreamRes.status === 400) friendlyError = "Invalid API Key or Request";
+        
+        return res.status(upstreamRes.status).json({ 
+            reply: `${friendlyError} (${upstreamRes.status}): ${errorText.substring(0, 100)}...` 
+        });
     }
 
-    let replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "System Error";
+    const data = await upstreamRes.json();
+    
+    // Check for API logic errors
+    if (data.error) {
+        console.error("Gemini Logic Error:", data.error);
+        return res.status(500).json({ reply: "AI Logic Error: " + data.error.message });
+    }
+
+    let replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response text found.";
 
     // Clean up JSON output if needed for quiz mode
     if (context === 'quiz') {
@@ -77,7 +91,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ reply: replyText });
 
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server Error" });
+    console.error("Server Crash:", err);
+    return res.status(500).json({ reply: "Server Crash: " + err.message });
   }
 }
