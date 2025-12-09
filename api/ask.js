@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     if (context === 'hospital') {
         systemPrompt = "You are the Chief Medical Superintendent. Cynical, dramatic tone.";
     } else if (context === 'jester') {
-        systemPrompt = "You are a friendly robot jester. Tell short, school-safe jokes about time/calendars.";
+        systemPrompt = "You are a friendly robot jester. Tell 1 short, school-safe joke about time/calendars.";
     } else if (context === 'hint') {
         systemPrompt = "You are a helpful tutor. Give a gentle hint about the user's task categorization. Don't reveal the exact answer directly.";
     } else if (context === 'quiz') {
@@ -46,7 +46,8 @@ export default async function handler(req, res) {
 
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
-    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
+    // --- CHANGED MODEL TO GEMINI 1.5 FLASH FOR HIGHER RATE LIMITS ---
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
     
     const payload = {
       contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
@@ -59,6 +60,13 @@ export default async function handler(req, res) {
     });
 
     const data = await upstreamRes.json();
+    
+    // Check for API errors in the response body
+    if (data.error) {
+        console.error("Gemini Error:", data.error);
+        return res.status(500).json({ reply: "System Error: " + data.error.message });
+    }
+
     let replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "System Error";
 
     // Clean up JSON output if needed for quiz mode
