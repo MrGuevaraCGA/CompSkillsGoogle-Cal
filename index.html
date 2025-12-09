@@ -233,14 +233,27 @@
 
     <script>
         // --- Game Config ---
-        const API_URL = "https://comp-skills-google-cal.vercel.app"; // Your existing Vercel deployment
+        const API_URL = "https://comp-skills-google-cal.vercel.app/api/ask"; // Your Vercel deployment
         let currentLevel = 1;
         let correctPlacements = 0;
         let totalLevelItems = 0;
         let isQuizMode = false;
 
+        // --- Offline Content (Fallbacks) ---
+        const FALLBACK_JOKES = [
+            "Why did the calendar go to the gym? To get more dates!",
+            "What happens if you're late for school? Time flies!",
+            "Why did the computer arrive late? It had a hard drive!",
+            "My calendar is always nervous. Its days are numbered."
+        ];
+
+        const FALLBACK_QUIZZES = [
+            { question: "What should you do with a 'Red' urgent task?", options: ["Do it last", "Do it first", "Delete it", "Ignore it"], answer: 1 },
+            { question: "When is the best time to check your calendar?", options: ["Once a year", "Every morning", "Never", "Only on Sundays"], answer: 1 },
+            { question: "How long should a 'Brain Break' be?", options: ["2 hours", "5-10 minutes", "10 seconds", "All day"], answer: 1 }
+        ];
+
         // --- Level Data ---
-        // Each level defines the tasks available and where they belong.
         const levels = [
             { 
                 title: "The Awakening", desc: "Drag tasks to the matching Day. Time doesn't matter yet.", 
@@ -266,7 +279,6 @@
                     { id: 't9', text: "Gaming (Tue 3pm)", day: 'tue', time: '15', type: 'personal' }
                 ]
             },
-            // ... Simplified for the example (would go to 10) ...
             { title: "Left Eye", desc: "Busy Morning! Fill the 9am slots.", tasks: [{id:'l4a', text:"Meeting (Mon 9am)", day:'mon', time:'9', type:'work'}, {id:'l4b', text:"Yoga (Wed 9am)", day:'wed', time:'9', type:'personal'}] },
             { title: "The Body", desc: "Afternoon Rush. Fill the 3pm slots.", tasks: [{id:'l5a', text:"Art (Tue 3pm)", day:'tue', time:'15', type:'personal'}, {id:'l5b', text:"Physics (Thu 3pm)", day:'thu', time:'15', type:'work'}] },
             { title: "Left Arm", desc: "Friday Funday.", tasks: [{id:'l6a', text:"Movies (Fri 5pm)", day:'fri', time:'17', type:'personal'}, {id:'l6b', text:"Quiz (Fri 11am)", day:'fri', time:'11', type:'urgent'}] },
@@ -288,19 +300,16 @@
             correctPlacements = 0;
             totalLevelItems = levelData.tasks.length;
 
-            // UI Update
             document.getElementById('level-display').innerText = lvl;
             document.getElementById('level-title').innerText = `Level ${lvl}: ${levelData.title}`;
             document.getElementById('level-desc').innerText = levelData.desc;
             document.getElementById('items-left').innerText = `${totalLevelItems} left`;
 
-            // Clear Board
             document.querySelectorAll('.cal-slot').forEach(slot => {
                 slot.innerHTML = '';
                 slot.classList.remove('correct', 'wrong');
             });
 
-            // Populate Chaos Queue
             const container = document.getElementById('task-container');
             container.innerHTML = '';
             levelData.tasks.forEach(task => {
@@ -310,13 +319,12 @@
                 el.draggable = true;
                 el.dataset.id = task.id;
                 el.dataset.type = task.type;
-                // Store target data for validation
                 el.dataset.targetDay = task.day;
                 el.dataset.targetTime = task.time || 'any'; 
                 container.appendChild(el);
             });
             
-            setupDragAndDrop(); // Re-bind events to new items
+            setupDragAndDrop();
         }
 
         // --- Drag & Drop Logic ---
@@ -356,7 +364,7 @@
         }
 
         function handleDrop(slot, card) {
-            if (slot.children.length > 0) return; // Slot full
+            if (slot.children.length > 0) return;
 
             const targetDay = card.dataset.targetDay;
             const targetTime = card.dataset.targetTime;
@@ -364,41 +372,31 @@
             const slotDay = slot.dataset.day;
             const slotTime = slot.dataset.time;
 
-            // Validate
             const dayMatch = targetDay === slotDay;
             const timeMatch = (targetTime === 'any') || (targetTime === slotTime);
 
             if (dayMatch && timeMatch) {
-                // Success
                 slot.appendChild(card);
                 slot.classList.add('correct');
-                card.draggable = false; // Lock it
+                card.draggable = false;
                 card.style.cursor = 'default';
                 correctPlacements++;
                 document.getElementById('items-left').innerText = `${totalLevelItems - correctPlacements} left`;
                 
-                // Visual Feedback
-                const successAudio = new Audio('https://www.soundjay.com/buttons/sounds/button-3.mp3'); // Fallback sound
-                // successAudio.play().catch(e=>{}); 
-
                 if (correctPlacements === totalLevelItems) {
                     setTimeout(levelComplete, 500);
                 }
             } else {
-                // Fail
                 slot.classList.add('wrong');
                 setTimeout(() => slot.classList.remove('wrong'), 500);
-                // Return to queue (handled by dragend logic mostly, but visually it stays in queue)
             }
         }
 
         // --- Level Completion & AI ---
         function levelComplete() {
-            // Reveal Body Part
             const part = document.getElementById(`part-${currentLevel}`);
             if(part) part.classList.add('visible');
 
-            // Trigger Quiz on every other level
             if (currentLevel % 2 !== 0) {
                 showQuiz();
             } else {
@@ -416,7 +414,7 @@
             
             modal.classList.remove('hidden');
             quizBox.classList.remove('hidden');
-            continueBtn.classList.add('hidden'); // Hide continue until answer
+            continueBtn.classList.add('hidden');
             
             title.innerText = "Challenge!";
             content.innerText = "Answer this to unlock the next level:";
@@ -428,7 +426,6 @@
             qEl.innerText = "Generating AI Question...";
             optsEl.innerHTML = "";
             
-            // Call AI for quiz
             const payload = {
                 message: "Generate a multiple choice question about time management or calendars for a student. Format: JSON with 'question', 'options' (array), and 'answer' (index).",
                 context: "quiz"
@@ -442,38 +439,41 @@
                 });
                 const data = await response.json();
                 
-                // Parse JSON response safely
+                // ERROR CHECK: If API returns "System Error", force jump to catch block
+                if (!data.reply || data.reply.includes("System Error")) throw new Error("API Fallback");
+
                 let quizData;
                 try {
-                    // Sometimes AI returns markdown code block, strip it
                     let jsonStr = data.reply.replace(/```json/g, '').replace(/```/g, '').trim();
                     quizData = JSON.parse(jsonStr);
                 } catch(e) {
                     throw new Error("Invalid JSON from AI");
                 }
 
-                qEl.innerText = quizData.question;
-                
-                quizData.options.forEach((opt, idx) => {
-                    const btn = document.createElement('button');
-                    btn.className = "w-full bg-white border border-indigo-200 p-2 rounded mb-2 hover:bg-indigo-100 transition text-sm text-left";
-                    btn.innerText = opt;
-                    btn.onclick = () => handleQuizAnswer(idx, quizData.answer, btn);
-                    optsEl.appendChild(btn);
-                });
+                renderQuiz(quizData);
 
             } catch(e) {
-                // Fallback Question if AI fails
-                qEl.innerText = "What is a 'deadline'?";
-                const opts = ["A line that is dead", "The latest time a task can be finished"];
-                opts.forEach((opt, i) => {
-                     const btn = document.createElement('button');
-                    btn.className = "w-full bg-white border border-indigo-200 p-2 rounded mb-2 hover:bg-indigo-100 transition text-sm text-left";
-                    btn.innerText = opt;
-                    btn.onclick = () => handleQuizAnswer(i, 1, btn);
-                    optsEl.appendChild(btn);
-                });
+                // FALLBACK MODE
+                console.log("Using Fallback Quiz");
+                const randomQuiz = FALLBACK_QUIZZES[Math.floor(Math.random() * FALLBACK_QUIZZES.length)];
+                renderQuiz(randomQuiz);
             }
+        }
+
+        function renderQuiz(quizData) {
+            const qEl = document.getElementById('quiz-question');
+            const optsEl = document.getElementById('quiz-options');
+            
+            qEl.innerText = quizData.question;
+            optsEl.innerHTML = "";
+
+            quizData.options.forEach((opt, idx) => {
+                const btn = document.createElement('button');
+                btn.className = "w-full bg-white border border-indigo-200 p-2 rounded mb-2 hover:bg-indigo-100 transition text-sm text-left";
+                btn.innerText = opt;
+                btn.onclick = () => handleQuizAnswer(idx, quizData.answer, btn);
+                optsEl.appendChild(btn);
+            });
         }
 
         function handleQuizAnswer(selected, correct, btnElement) {
@@ -512,7 +512,6 @@
                     location.reload();
                 }
             }
-            // Reset quiz UI for next time
             document.getElementById('quiz-feedback').classList.add('hidden');
             isQuizMode = false;
         }
@@ -535,12 +534,15 @@
                 });
 
                 const data = await response.json();
-                const joke = data.reply || "Why did the calendar go to the gym? To get more dates!";
+                // Check for System Error
+                if (!data.reply || data.reply.includes("System Error")) throw new Error("API Fallback");
                 
-                showModal("Jester Bot Says:", joke, "🤖");
+                showModal("Jester Bot Says:", data.reply, "🤖");
 
             } catch (error) {
-                showModal("Error", "My joke circuits are jammed.", "⚠️");
+                // FALLBACK MODE
+                const randomJoke = FALLBACK_JOKES[Math.floor(Math.random() * FALLBACK_JOKES.length)];
+                showModal("Jester Bot Says:", randomJoke + " (Offline Mode)", "🤖");
             } finally {
                 btn.innerHTML = `<span>🤖 Tell me a Joke</span>`;
             }
@@ -552,7 +554,6 @@
             btn.innerText = "Thinking...";
             btn.disabled = true;
 
-            // Get first pending task
             const container = document.getElementById('task-container');
             if(container.children.length === 0) {
                 btn.innerText = originalText;
@@ -564,7 +565,7 @@
             const topTask = container.children[0].innerText;
             
             const payload = {
-                message: `The user is playing a time management game. The current task is "${topTask}". Give a short, helpful hint about what kind of task this is (Work/Personal/Urgent) or when it might happen, without giving the exact answer.`,
+                message: `Task: "${topTask}". Give a hint about categorizing this task.`,
                 context: "hint"
             };
 
@@ -575,9 +576,12 @@
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
+                if (!data.reply || data.reply.includes("System Error")) throw new Error("API Fallback");
+                
                 alert("💡 Hint: " + data.reply);
             } catch(e) {
-                alert("Hint system offline.");
+                // FALLBACK MODE
+                alert("💡 Hint: Look closely at the day and time mentioned in the text! (Offline Hint)");
             } finally {
                 btn.innerText = originalText;
                 btn.disabled = false;
