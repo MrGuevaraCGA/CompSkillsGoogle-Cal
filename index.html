@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chrono-City: Calendar Builder</title>
+  <style>
+    :root {
+      --work-color: #00d9ff;
+      --personal-color: #00ff73;
+      --urgent-color: #ff0055;
+      --bg-color: #1a1a2e;
+      --ground-color: #16213e;
+      --text-color: #e94560;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg-color);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: white;
+      user-select: none;
+    }
+
+    /* --- UI Layer (HUD) --- */
+    #ui-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .panel {
+      pointer-events: auto;
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      padding: 15px;
+      backdrop-filter: blur(5px);
+    }
+
+    #stats-bar {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      display: flex;
+      gap: 20px;
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #fff;
+    }
+
+    #stress-bar-container {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 300px;
+      height: 25px;
+      background: #333;
+      border-radius: 15px;
+      border: 2px solid #555;
+      overflow: hidden;
+    }
+
+    #stress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #ffae00, #ff0000);
+      transition: width 0.3s;
+    }
+
+    #stress-label {
+      position: absolute;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #aaa;
+    }
+
+    /* --- 3D World --- */
+    #world-container {
+      position: absolute;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      perspective: 1200px;
+      overflow: hidden;
+    }
+
+    #city-plane {
+      width: 800px;
+      height: 800px;
+      background: var(--ground-color);
+      background-image: 
+        linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+      background-size: 50px 50px;
+      transform: rotateX(50deg) rotateZ(-45deg); /* Isometric-ish view */
+      transform-style: preserve-3d;
+      box-shadow: 0 0 50px rgba(0,0,0,0.5);
+      border: 10px solid #222;
+      position: relative;
+    }
+
+    /* --- Districts (Drop Zones) --- */
+    .district {
+      position: absolute;
+      width: 200px;
+      height: 200px;
+      border: 4px dashed rgba(255,255,255,0.3);
+      transform-style: preserve-3d;
+      transition: background 0.3s;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-weight: bold;
+      font-size: 1.5rem;
+      text-shadow: 0 0 10px black;
+      text-align: center;
+    }
+
+    .district span {
+        transform: rotateZ(45deg) rotateX(-50deg) translateZ(50px); /* Face camera */
+        pointer-events: none;
+    }
+
+    #zone-work { 
+      top: 50px; left: 50px; 
+      border-color: var(--work-color); 
+      background: rgba(0, 217, 255, 0.1);
+    }
+    #zone-personal { 
+      bottom: 50px; right: 50px; 
+      border-color: var(--personal-color); 
+      background: rgba(0, 255, 115, 0.1);
+    }
+    #zone-urgent { 
+      top: 50px; right: 50px; 
+      border-color: var(--urgent-color); 
+      background: rgba(255, 0, 85, 0.1);
+    }
+
+    .district.highlight {
+      background: rgba(255, 255, 255, 0.2);
+      box-shadow: 0 0 30px white;
+    }
+
+    /* --- Buildings --- */
+    .building {
+      position: absolute;
+      width: 40px;
+      height: 0px; /* Grows */
+      bottom: 0;
+      transform-style: preserve-3d;
+      transition: height 0.5s ease-out;
+    }
+
+    /* Building Faces */
+    .face { position: absolute; width: 100%; height: 100%; opacity: 0.8; border: 1px solid rgba(255,255,255,0.1); }
+    .face.front { transform: translateZ(20px); background: inherit; }
+    .face.back { transform: rotateY(180deg) translateZ(20px); background: inherit; }
+    .face.left { transform: rotateY(-90deg) translateZ(20px); background: inherit; filter: brightness(0.8); }
+    .face.right { transform: rotateY(90deg) translateZ(20px); background: inherit; filter: brightness(0.8); }
+    .face.top { 
+      width: 40px; height: 40px; 
+      transform: rotateX(90deg) translateZ(20px); 
+      background: white; opacity: 1; 
+    }
+
+    /* --- Tasks (Falling Items) --- */
+    .task-orb {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      background: white;
+      border-radius: 50%;
+      box-shadow: 0 0 20px white;
+      transform-style: preserve-3d;
+      z-index: 1000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 0.7rem;
+      text-align: center;
+      color: black;
+      font-weight: bold;
+      padding: 5px;
+      cursor: grab;
+      /* Start high above board */
+      transform: translateZ(400px); 
+    }
+    
+    .task-orb.dragging {
+        cursor: grabbing;
+        background: yellow;
+        box-shadow: 0 0 40px yellow;
+    }
+
+    /* --- Chatbot Interface --- */
+    #ai-panel {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 320px;
+      max-height: 500px;
+      display: flex;
+      flex-direction: column;
+      pointer-events: auto;
+    }
+
+    #ai-header {
+      background: linear-gradient(90deg, #222, #444);
+      padding: 10px;
+      border-radius: 10px 10px 0 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    #ai-body {
+      background: rgba(0,0,0,0.9);
+      border: 1px solid #444;
+      border-top: none;
+      height: 300px;
+      display: flex;
+      flex-direction: column;
+      transition: height 0.3s;
+    }
+    
+    #ai-body.collapsed { height: 0; overflow: hidden; border: none;}
+
+    #chat-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      font-size: 0.9rem;
+    }
+    
+    .msg { margin-bottom: 8px; padding: 6px 10px; border-radius: 4px; }
+    .msg.bot { background: #333; color: #00d9ff; border-left: 2px solid #00d9ff; }
+    .msg.user { background: #444; color: white; text-align: right; }
+
+    #chat-inputs { padding: 10px; border-top: 1px solid #333; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+    
+    button {
+      padding: 8px;
+      background: #333;
+      border: 1px solid #555;
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    button:hover { background: #555; }
+    button.action-btn { background: var(--work-color); color: black; font-weight: bold; border: none; grid-column: span 2; }
+
+    /* --- Overlay --- */
+    #overlay {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.85);
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+    
+    #overlay h1 { font-size: 3rem; color: var(--work-color); margin-bottom: 10px; text-shadow: 0 0 20px var(--work-color); }
+    #start-btn { padding: 15px 40px; font-size: 1.5rem; background: var(--personal-color); border: none; border-radius: 30px; color: black; font-weight: bold; cursor: pointer; }
+    #start-btn:hover { transform: scale(1.1); box-shadow: 0 0 30px var(--personal-color); }
+
+  </style>
+</head>
+<body>
+
+  <!-- Game World -->
+  <div id="world-container">
+    <div id="city-plane">
+      
+      <!-- Districts -->
+      <div id="zone-work" class="district"><span>WORK<br>(Blue)</span></div>
+      <div id="zone-urgent" class="district"><span>URGENT<br>(Red)</span></div>
+      <div id="zone-personal" class="district"><span>PERSONAL<br>(Green)</span></div>
+      
+      <!-- Buildings Container (Populated by JS) -->
+      <div id="buildings-layer"></div>
+      
+      <!-- Tasks Layer (Populated by JS) -->
+      <div id="tasks-layer"></div>
+
+    </div>
+  </div>
+
+  <!-- UI Layer -->
+  <div id="ui-layer">
+    <div id="stats-bar" class="panel">
+      <div>City Pop: <span id="score">0</span></div>
+      <div>Level: <span id="level">1</span></div>
+    </div>
+    
+    <div id="stress-bar-container">
+      <div id="stress-fill"></div>
+    </div>
+    <div id="stress-label">Task Overload</div>
+
+    <!-- Chatbot -->
+    <div id="ai-panel">
+      <div id="ai-header" onclick="toggleChat()">
+        <div style="font-size:20px;">🏙️</div>
+        <div><strong>City Planner AI</strong><br><small>Click to toggle</small></div>
+      </div>
+      <div id="ai-body">
+        <div id="chat-log">
+          <div class="msg bot">Welcome, Mayor! Drag tasks to the correct district to build your city. Don't let tasks pile up!</div>
+        </div>
+        <div id="chat-inputs">
+          <button onclick="askAI('tip')">💡 Tip</button>
+          <button onclick="askAI('joke')">😂 Joke</button>
+          <button class="action-btn" onclick="generateChaos()">⚠️ Trigger Task Storm (AI)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Start Screen -->
+  <div id="overlay">
+    <h1>CHRONO-CITY</h1>
+    <p>Build your calendar city by sorting tasks!</p>
+    <p><strong>Blue:</strong> Work/School | <strong>Green:</strong> Personal/Fun | <strong>Red:</strong> Urgent/Due Soon</p>
+    <br>
+    <button id="start-btn" onclick="startGame()">Start Building</button>
+  </div>
+
+  <script>
+    /* --- Game Configuration --- */
+    const TASKS = [
+      { text: "Math Test", type: "work" },
+      { text: "Science HW", type: "work" },
+      { text: "Write Essay", type: "work" },
+      { text: "Soccer", type: "personal" },
+      { text: "Video Games", type: "personal" },
+      { text: "Sleep", type: "personal" },
+      { text: "Lunch", type: "personal" },
+      { text: "Form Due!", type: "urgent" },
+      { text: "Dentist", type: "urgent" },
+      { text: "Late Fee", type: "urgent" }
+    ];
+
+    let gameState = {
+      active: false,
+      score: 0,
+      stress: 0,
+      level: 1,
+      tasks: []
+    };
+
+    let spawnTimer;
+    let gameLoopRef;
+
+    /* --- Audio Context (Optional) --- */
+    // Simple beeps could go here
+
+    /* --- Core Game Logic --- */
+    function startGame() {
+      document.getElementById('overlay').style.display = 'none';
+      gameState.active = true;
+      gameState.score = 0;
+      gameState.stress = 0;
+      gameState.level = 1;
+      gameState.tasks = [];
+      
+      // Clear board
+      document.getElementById('tasks-layer').innerHTML = '';
+      document.getElementById('buildings-layer').innerHTML = '';
+      
+      updateHUD();
+      
+      // Start loops
+      spawnTimer = setInterval(spawnTask, 2500);
+      gameLoopRef = requestAnimationFrame(gameLoop);
+    }
+
+    function spawnTask() {
+      if (!gameState.active) return;
+      
+      const data = TASKS[Math.floor(Math.random() * TASKS.length)];
+      const el = document.createElement('div');
+      el.className = 'task-orb';
+      el.innerText = data.text;
+      el.dataset.type = data.type;
+      
+      // Random start position on the board (0-800px)
+      const x = Math.random() * 600 + 100;
+      const y = Math.random() * 600 + 100;
+      
+      // Start high up (Z axis in our transformed space)
+      // Since we are using rotateX, 'top' moves it "back" visually on the plane
+      // We will use standard top/left for position on the plane, and transform Z for height
+      
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+      el.style.transform = `translateZ(600px)`; // Start high
+      
+      const taskObj = {
+        el: el,
+        x: x, 
+        y: y,
+        z: 600,
+        speed: 1 + (gameState.level * 0.2),
+        type: data.type
+      };
+      
+      // Attach drag events
+      makeDraggable(el, taskObj);
+      
+      document.getElementById('tasks-layer').appendChild(el);
+      gameState.tasks.push(taskObj);
+    }
+
+    function gameLoop() {
+      if (!gameState.active) return;
+      
+      const tasksToRemove = [];
+      
+      gameState.tasks.forEach(task => {
+        if (task.isDragging) return; // Don't fall if holding
+        
+        // Gravity
+        task.z -= task.speed;
+        
+        // Render
+        task.el.style.transform = `translateZ(${task.z}px)`;
+        
+        // Hit Ground?
+        if (task.z <= 0) {
+          tasksToRemove.push(task);
+          damageCity(10);
+          showFeedback(task.x, task.y, "CRASH!", "red");
+        }
+      });
+      
+      // Cleanup crashed tasks
+      tasksToRemove.forEach(t => {
+        t.el.remove();
+        gameState.tasks = gameState.tasks.filter(x => x !== t);
+      });
+      
+      if (gameState.stress >= 100) endGame();
+      
+      requestAnimationFrame(gameLoop);
+    }
+
+    function damageCity(amount) {
+      gameState.stress += amount;
+      updateHUD();
+      // Shake effect
+      const plane = document.getElementById('city-plane');
+      plane.style.transform = `rotateX(50deg) rotateZ(-45deg) translate(${Math.random()*10}px, ${Math.random()*10}px)`;
+      setTimeout(() => {
+         plane.style.transform = `rotateX(50deg) rotateZ(-45deg)`;
+      }, 100);
+    }
+
+    function buildCity(type, x, y) {
+      // Spawn a building at random spot inside the zone
+      const b = document.createElement('div');
+      b.className = 'building';
+      
+      // Determine color based on type
+      let color = 'white';
+      if(type === 'work') color = 'var(--work-color)';
+      if(type === 'personal') color = 'var(--personal-color)';
+      if(type === 'urgent') color = 'var(--urgent-color)';
+      
+      b.style.background = color;
+      
+      // Add faces for 3D effect
+      b.innerHTML = `
+        <div class="face front"></div>
+        <div class="face back"></div>
+        <div class="face left"></div>
+        <div class="face right"></div>
+        <div class="face top"></div>
+      `;
+      
+      // Random position slightly randomized near drop
+      b.style.left = (x - 20) + 'px';
+      b.style.top = (y - 20) + 'px';
+      
+      document.getElementById('buildings-layer').appendChild(b);
+      
+      // Animate growth
+      setTimeout(() => {
+        b.style.height = (Math.random() * 50 + 20) + 'px';
+      }, 50);
+      
+      gameState.score += 100;
+      gameState.stress = Math.max(0, gameState.stress - 5);
+      
+      if (gameState.score % 500 === 0) {
+          gameState.level++;
+          addChatMsg("City upgraded! Tasks falling faster!", "bot");
+      }
+      
+      updateHUD();
+    }
+
+    function updateHUD() {
+      document.getElementById('score').innerText = gameState.score;
+      document.getElementById('level').innerText = gameState.level;
+      document.getElementById('stress-fill').style.width = gameState.stress + '%';
+    }
+
+    function showFeedback(x, y, text, color) {
+        const f = document.createElement('div');
+        f.style.position = 'absolute';
+        f.style.left = x + 'px';
+        f.style.top = y + 'px';
+        f.style.color = color;
+        f.style.fontWeight = 'bold';
+        f.style.fontSize = '1.5rem';
+        f.style.textShadow = '0 0 5px black';
+        f.style.transform = 'translateZ(50px)'; // Float above
+        f.innerText = text;
+        document.getElementById('city-plane').appendChild(f);
+        setTimeout(() => f.remove(), 1000);
+    }
+
+    function endGame() {
+      gameState.active = false;
+      clearInterval(spawnTimer);
+      alert(`CITY OVERLOADED!\nFinal Population: ${gameState.score}`);
+      location.reload();
+    }
+
+    /* --- Drag Logic --- */
+    function makeDraggable(el, taskObj) {
+        el.onmousedown = function(e) { startDrag(e, taskObj); };
+        el.ontouchstart = function(e) { startDrag(e, taskObj); };
+    }
+
+    let currentDrag = null;
+
+    function startDrag(e, taskObj) {
+        e.preventDefault();
+        taskObj.isDragging = true;
+        currentDrag = taskObj;
+        taskObj.el.classList.add('dragging');
+    }
+
+    window.onmousemove = function(e) { moveDrag(e); };
+    window.ontouchmove = function(e) { moveDrag(e); };
+
+    function moveDrag(e) {
+        if (!currentDrag) return;
+        
+        let cx = e.clientX;
+        let cy = e.clientY;
+        if(e.touches && e.touches.length > 0) {
+            cx = e.touches[0].clientX;
+            cy = e.touches[0].clientY;
+        }
+
+        // We need to map 2D screen mouse coordinates back to the 3D plane
+        // This is complex math, but we can cheat since we have a fixed view.
+        // Or simpler: We just move the element in 2D "Screen Space" by taking it out of the container temporarily?
+        // No, let's keep it simple: Move the element based on mouse deltas?
+        // EASIEST WAY: While dragging, we just follow the mouse purely visually.
+        
+        // Actually, for this simulation, let's just use the mouse position relative to the window
+        // and check overlap with the 'zones' utilizing document.elementFromPoint.
+        
+        currentDrag.el.style.transform = `translateZ(500px)`; // Lift it up
+        
+        // We need to calculate where on the 'plane' the mouse is. 
+        // Since that's hard, we will rely on "drop target" logic on mouse up using standard DOM rectangles.
+    }
+
+    window.onmouseup = function(e) { endDrag(e); };
+    window.ontouchend = function(e) { endDrag(e); };
+
+    function endDrag(e) {
+        if (!currentDrag) return;
+        
+        let cx = e.clientX;
+        let cy = e.clientY;
+        if(e.changedTouches && e.changedTouches.length > 0) {
+            cx = e.changedTouches[0].clientX;
+            cy = e.changedTouches[0].clientY;
+        }
+
+        // Check what's under the mouse/finger
+        // We hide the dragged element for a millisecond so we can see what's under it
+        currentDrag.el.style.display = 'none';
+        let elemBelow = document.elementFromPoint(cx, cy);
+        currentDrag.el.style.display = 'flex';
+
+        if (!elemBelow) {
+            cancelDrag(); 
+            return;
+        }
+
+        const district = elemBelow.closest('.district');
+        
+        if (district) {
+            let targetType = '';
+            if (district.id === 'zone-work') targetType = 'work';
+            if (district.id === 'zone-personal') targetType = 'personal';
+            if (district.id === 'zone-urgent') targetType = 'urgent';
+
+            if (targetType === currentDrag.type) {
+                // Success!
+                // We need coordinate relative to the plane to place building
+                // We'll just use the district's offset + random
+                const rect = district.getBoundingClientRect();
+                // Rough estimation of position on the plane is hard, so let's just random spawn inside the district div
+                // We can append building TO the district? No, buildings layer is separate.
+                // Let's use the district's 'style' coordinates (top/left)
+                
+                let bx = parseInt(district.style.left || district.offsetLeft);
+                let by = parseInt(district.style.top || district.offsetTop);
+                
+                // Add randomness
+                bx += Math.random() * 150;
+                by += Math.random() * 150;
+                
+                buildCity(targetType, bx, by);
+                
+                currentDrag.el.remove();
+                gameState.tasks = gameState.tasks.filter(t => t !== currentDrag);
+            } else {
+                // Wrong zone
+                damageCity(5);
+                showFeedback(parseInt(currentDrag.el.style.left), parseInt(currentDrag.el.style.top), "WRONG!", "red");
+                cancelDrag();
+            }
+        } else {
+            cancelDrag();
+        }
+
+        currentDrag = null;
+    }
+
+    function cancelDrag() {
+        if(currentDrag) {
+            currentDrag.isDragging = false;
+            currentDrag.el.classList.remove('dragging');
+        }
+    }
+
+
+    /* --- Chatbot Logic --- */
+    function toggleChat() {
+        const body = document.getElementById('ai-body');
+        if (body.style.height === '0px' || body.classList.contains('collapsed')) {
+            body.style.height = '300px';
+            body.classList.remove('collapsed');
+        } else {
+            body.style.height = '0px';
+            body.classList.add('collapsed');
+        }
+    }
+
+    function addChatMsg(text, sender) {
+        const log = document.getElementById('chat-log');
+        const d = document.createElement('div');
+        d.className = `msg ${sender}`;
+        d.innerText = text;
+        log.appendChild(d);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    async function askAI(mode) {
+        if(!gameState.active) { alert("Start game first!"); return; }
+        
+        addChatMsg("...", "bot");
+        
+        try {
+            const res = await fetch("/api/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: mode, message: "Game Update" })
+            });
+            const data = await res.json();
+            
+            // Remove loading dots
+            const log = document.getElementById('chat-log');
+            log.removeChild(log.lastChild);
+            
+            if (data.reply) addChatMsg(data.reply, "bot");
+            
+        } catch(e) {
+            addChatMsg("AI Offline.", "bot");
+        }
+    }
+
+    async function generateChaos() {
+        if(!gameState.active) return;
+        addChatMsg("Generating Storm...", "bot");
+        
+        try {
+             const res = await fetch("/api/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode: "generate", message: "storm" })
+            });
+            const data = await res.json();
+            
+            // Remove loading
+            const log = document.getElementById('chat-log');
+            log.removeChild(log.lastChild);
+            
+            if(data.reply) {
+                const tasks = data.reply.split('\n');
+                let count = 0;
+                tasks.forEach((line, i) => {
+                    const parts = line.split('|');
+                    if(parts.length === 2) {
+                        setTimeout(() => {
+                            spawnSpecificTask(parts[0].trim(), parts[1].trim().toLowerCase());
+                        }, i * 500); // Staggered spawn
+                        count++;
+                    }
+                });
+                addChatMsg(`⚠️ INCOMING STORM: ${count} TASKS!`, "bot");
+            }
+        } catch(e) {
+            addChatMsg("Storm failed.", "bot");
+        }
+    }
+    
+    function spawnSpecificTask(text, type) {
+        // Same logic as spawnTask but with overrides
+        const el = document.createElement('div');
+        el.className = 'task-orb';
+        el.innerText = text;
+        el.dataset.type = type;
+        el.style.background = "#fffaaa";
+        el.style.color = "black";
+        
+        const x = Math.random() * 600 + 100;
+        const y = Math.random() * 600 + 100;
+        
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+        el.style.transform = `translateZ(600px)`;
+        
+        const taskObj = {
+            el: el, x: x, y: y, z: 600, speed: 2, type: type // Faster storm tasks
+        };
+        
+        makeDraggable(el, taskObj);
+        document.getElementById('tasks-layer').appendChild(el);
+        gameState.tasks.push(taskObj);
+    }
+
+  </script>
+</body>
+</html>
