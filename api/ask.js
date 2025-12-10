@@ -1,7 +1,18 @@
 export default async function handler(req, res) {
-  // CORS: Allow your simulation to talk to this backend
+  
+  // --- DYNAMIC CORS FIX ---
+  // Instead of hardcoding one URL, we check who is asking and say "Yes" to them.
+  const origin = req.headers.origin;
+  
+  // If an origin is present (e.g., GitHub, Localhost, Vercel), allow it.
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    // Fallback for non-browser tools
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
   res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', 'https://comp-skills-google-cal.vercel.app'); 
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
     'Access-Control-Allow-Headers',
@@ -46,8 +57,7 @@ export default async function handler(req, res) {
 
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
-    // --- CHANGED MODEL TO GEMINI 2.5 FLASH ---
-    // Using Template Literal syntax and re-adding retry loop logic
+    // --- GEMINI 2.5 FLASH ---
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     
     const payload = {
