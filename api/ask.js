@@ -46,8 +46,8 @@ export default async function handler(req, res) {
 
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
-    // --- CHANGED MODEL TO GEMINI 2.0 FLASH-LITE (High Quota / Low Cost) ---
-    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + encodeURIComponent(apiKey);
+    // --- REVERTED TO GEMINI 2.5 FLASH PREVIEW (Most Stable for this Env) ---
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=" + encodeURIComponent(apiKey);
     
     const payload = {
       contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
