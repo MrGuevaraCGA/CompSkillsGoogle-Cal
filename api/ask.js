@@ -1,7 +1,6 @@
 export default async function handler(req, res) {
   // CORS: Allow your simulation to talk to this backend
   res.setHeader('Access-Control-Allow-Credentials', true);
-  // FIXED: Specific domain required when Credentials are true
   res.setHeader('Access-Control-Allow-Origin', 'https://comp-skills-google-cal.vercel.app'); 
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
@@ -47,10 +46,9 @@ export default async function handler(req, res) {
 
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
-    // Opción más potente (si tu API key tiene acceso)
-    // const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
-    // Using fetch equivalent:
-    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
+    // --- CHANGED MODEL TO GEMINI 2.0 FLASH-LITE (Correct Model ID) ---
+    // Note: If you specifically have access to a 2.5-flash-lite preview, change the string below to "gemini-2.5-flash-lite"
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite-preview-02-05:generateContent?key=" + encodeURIComponent(apiKey);
     
     const payload = {
       contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
@@ -70,6 +68,7 @@ export default async function handler(req, res) {
         let friendlyError = "System Error";
         if (upstreamRes.status === 429) friendlyError = "Rate Limit Exceeded (Quota)";
         if (upstreamRes.status === 400) friendlyError = "Invalid API Key or Request";
+        if (upstreamRes.status === 404) friendlyError = "Model Not Found (Check Model ID)";
         
         return res.status(upstreamRes.status).json({ 
             reply: `${friendlyError} (${upstreamRes.status}): ${errorText.substring(0, 100)}...` 
