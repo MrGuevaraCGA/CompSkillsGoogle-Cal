@@ -1,7 +1,8 @@
 export default async function handler(req, res) {
   // CORS: Allow your simulation to talk to this backend
   res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*'); 
+  // FIXED: Specific domain required when Credentials are true
+  res.setHeader('Access-Control-Allow-Origin', 'https://comp-skills-google-cal.vercel.app'); 
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader(
     'Access-Control-Allow-Headers',
@@ -46,8 +47,10 @@ export default async function handler(req, res) {
 
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
-    // --- CHANGED MODEL TO GEMINI 2.5 FLASH LIVE AS REQUESTED ---
-    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-live:generateContent?key=" + encodeURIComponent(apiKey);
+    // Opción más potente (si tu API key tiene acceso)
+    // const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    // Using fetch equivalent:
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
     
     const payload = {
       contents: [{ role: "user", parts: [{ text: finalPrompt }] }]
