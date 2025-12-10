@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     const finalPrompt = `${systemPrompt}\n\nRequest: ${message}`;
 
     // Opción más potente (si tu API key tiene acceso)
-    // const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    // const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
     // Using fetch equivalent:
     const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey);
     
